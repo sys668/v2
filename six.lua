@@ -1328,15 +1328,6 @@ local function getAliveBossTarget(room)
 		end
 	end
 
-	local function sortByBreakableUID(a, b)
-		return tostring(a:GetAttribute("BreakableUID") or a.Name)
-			< tostring(b:GetAttribute("BreakableUID") or b.Name)
-	end
-
-	-- Mesma ordem para todo mundo no servidor.
-	table.sort(smallChests, sortByBreakableUID)
-	table.sort(bigBosses, sortByBreakableUID)
-
 	-- Mantem a prioridade original: primeiro os baus pequenos,
 	-- depois o boss grande.
 	return smallChests[1] or bigBosses[1]
@@ -1458,11 +1449,6 @@ local function getBossRooms()
 			table.insert(rooms, room)
 		end
 	end
-
-	-- Ordenar pelo uid faz todos seguirem a mesma rota no mesmo servidor.
-	table.sort(rooms, function(a, b)
-		return tostring(a.uid) < tostring(b.uid)
-	end)
 
 	return rooms
 end
