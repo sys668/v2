@@ -1,9 +1,3 @@
---[[ 
-	by @mzx
-	THE BEST auto farm script for the backrooms update event
-	Enjoy!
-]]--
-
 if not game:IsLoaded() then
 	game.Loaded:Wait()
 end
@@ -83,7 +77,7 @@ local Window = Rayfield:CreateWindow({
 	DisableBuildWarnings = false,
 	ConfigurationSaving = {
 		Enabled = true,
-		FolderName = "V2test",
+		FolderName = "DeepBackroomsPS99",
 		FileName = "Config"
 	},
 	KeySystem = false
@@ -1328,7 +1322,16 @@ local function getAliveBossTarget(room)
 		end
 	end
 
-	-- Mantem a prioridade original: primeiro os baus pequenos,
+	local function sortByBreakableUID(a, b)
+		return tostring(a:GetAttribute("BreakableUID") or a.Name)
+			< tostring(b:GetAttribute("BreakableUID") or b.Name)
+	end
+
+	-- Todos os jogadores escolhem os mesmos alvos na mesma ordem.
+	table.sort(smallChests, sortByBreakableUID)
+	table.sort(bigBosses, sortByBreakableUID)
+
+	-- Mantem a prioridade original: primeiro todos os baus pequenos,
 	-- depois o boss grande.
 	return smallChests[1] or bigBosses[1]
 end
@@ -1416,6 +1419,7 @@ local function teleportToBossRoom(room)
 	character:PivotTo(CFrame.new(roomPosition + Vector3.new(0, 4, 0)))
 	task.wait(0.35)
 
+	-- Mantem o desbloqueio original, mas termina o TP no boss e nao no Sign/telhado.
 	UnlockRoom(room.uid)
 	Network.Fire("RequestStreaming", roomPosition)
 
@@ -1434,7 +1438,8 @@ local function teleportToBossRoom(room)
 		bossRoomAnchorPositions[room.uid] = targetPosition
 	end
 
-	-- Fica voando acima do bauzao para evitar telhado, parede e void.
+	-- Permanece voando acima do boss. A ancoragem e o noclip continuam
+	-- ativos enquanto o Auto Farm estiver ligado.
 	character:PivotTo(CFrame.new(targetPosition + Vector3.new(0, 10, 0)))
 	rootPart.Anchored = true
 
@@ -1449,6 +1454,12 @@ local function getBossRooms()
 			table.insert(rooms, room)
 		end
 	end
+
+	-- A ordem de GetChildren pode variar entre clientes. Ordenar pelo UID
+	-- faz todos comecarem na mesma sala e seguirem a mesma rotacao.
+	table.sort(rooms, function(a, b)
+		return tostring(a.uid) < tostring(b.uid)
+	end)
 
 	return rooms
 end
@@ -1500,10 +1511,6 @@ task.spawn(function()
 			continue
 		end
 
-		if isAutoAnomlyActive() then
-			continue
-		end
-
 		if not canDoAction() then
 			continue
 		end
@@ -1530,6 +1537,7 @@ task.spawn(function()
 			targetRoom = goToNextBossRoom(bossRooms)
 		end
 
+		local uid = targetRoom.uid
 		local pos = getBossRoomPosition(targetRoom)
 		local isInRoom = (rootPart.Position - pos).Magnitude <= 130
 
@@ -1540,10 +1548,13 @@ task.spawn(function()
 			continue
 		end
 
+		-- Reavalia em todo ciclo: sempre prioriza os baus pequenos.
+		-- O boss grande so e escolhido quando nenhum bau pequeno existe.
 		local targetBreakable = getAliveBossTarget(targetRoom)
 
 		if not targetBreakable then
-			-- Espera um pouco para os breakables carregarem antes de trocar.
+			-- Da tempo para os Breakables carregarem apos chegar na sala.
+			-- Se nao houver nenhum alvo, avanca para a proxima Boss Room.
 			if not bossRoomEmptySince then
 				bossRoomEmptySince = os.clock()
 			elseif os.clock() - bossRoomEmptySince >= 2.5 then
@@ -1557,15 +1568,15 @@ task.spawn(function()
 
 		bossRoomEmptySince = nil
 
-		local breakableUID = targetBreakable:GetAttribute("BreakableUID")
-		local breakablePos = targetBreakable:GetPivot().Position
+		local bUID = targetBreakable:GetAttribute("BreakableUID")
+		local bPos = targetBreakable:GetPivot().Position
 
 		-- Paira sobre cada bau pequeno e, depois, sobre o boss grande.
 		enableBossTeleportNoclip(character)
 		rootPart.Anchored = true
-		character:PivotTo(CFrame.new(breakablePos + Vector3.new(0, 10, 0)))
+		character:PivotTo(CFrame.new(bPos + Vector3.new(0, 10, 0)))
 
-		Network.UnreliableFire("Breakables_PlayerDealDamage", breakableUID)
+		Network.UnreliableFire("Breakables_PlayerDealDamage", bUID)
 
 		local activePets = PlayerPet.GetByPlayer(localPlayer)
 		for _, pet in pairs(activePets) do
