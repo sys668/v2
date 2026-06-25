@@ -71,13 +71,13 @@ local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local Window = Rayfield:CreateWindow({
 	Name = "Backrooms Script",
 	LoadingTitle = "Loading...",
-	LoadingSubtitle = "by MZX",
+	LoadingSubtitle = "by mzx
 	Theme = "Default",
 	DisableRayfieldPrompts = false,
 	DisableBuildWarnings = false,
 	ConfigurationSaving = {
 		Enabled = true,
-		FolderName = "DeepBackroomsPS99",
+		FolderName = "v39
 		FileName = "Config"
 	},
 	KeySystem = false
@@ -1303,8 +1303,7 @@ local function getAliveBossTarget(room)
 	end
 
 	local roomPosition = getBossRoomPosition(room)
-	local smallChests = {}
-	local bigBosses = {}
+	local bossTarget = nil
 
 	for _, breakable in ipairs(breakablesFolder:GetChildren()) do
 		local breakableId = breakable:GetAttribute("BreakableID")
@@ -1313,27 +1312,17 @@ local function getAliveBossTarget(room)
 			local breakablePosition = breakable:GetPivot().Position
 
 			if (breakablePosition - roomPosition).Magnitude < 130 then
+				-- Keep the original priority: small chest first, then the boss.
 				if breakableId == "Daydream Mimic Chest2" then
-					table.insert(smallChests, breakable)
-				else
-					table.insert(bigBosses, breakable)
+					return breakable
 				end
+
+				bossTarget = breakable
 			end
 		end
 	end
 
-	local function sortByBreakableUID(a, b)
-		return tostring(a:GetAttribute("BreakableUID") or a.Name)
-			< tostring(b:GetAttribute("BreakableUID") or b.Name)
-	end
-
-	-- Todos os jogadores escolhem os mesmos alvos na mesma ordem.
-	table.sort(smallChests, sortByBreakableUID)
-	table.sort(bigBosses, sortByBreakableUID)
-
-	-- Mantem a prioridade original: primeiro todos os baus pequenos,
-	-- depois o boss grande.
-	return smallChests[1] or bigBosses[1]
+	return bossTarget
 end
 
 local function getBigBossTarget(room)
@@ -1383,17 +1372,57 @@ local function enableBossTeleportNoclip(character, duration)
 		end)
 	end
 
-	if duration then
-		task.delay(duration, function()
-			if version ~= bossNoclipVersion then
-				return
-			end
+	task.delay(duration or 2.5, function()
+		if version ~= bossNoclipVersion then
+			return
+		end
 
-			disableBossTeleportNoclip(version)
-		end)
-	end
+		disableBossTeleportNoclip(version)
+	end)
 
 	return version
+end
+
+local function getSafeBossLandingPosition(room, targetPosition)
+	local roomModel = room.Model
+	if not roomModel then
+		return targetPosition + Vector3.new(0, 8, 0)
+	end
+
+	local raycastParams = RaycastParams.new()
+	raycastParams.FilterType = Enum.RaycastFilterType.Include
+	raycastParams.FilterDescendantsInstances = {roomModel}
+	raycastParams.IgnoreWater = true
+
+	-- Only raycast against the room itself, ignoring boss, chests, and character.
+	local rayOrigin = targetPosition + Vector3.new(0, 2, 0)
+	local rayResult = workspace:Raycast(
+		rayOrigin,
+		Vector3.new(0, -80, 0),
+		raycastParams
+	)
+
+	if rayResult and rayResult.Normal.Y > 0.5 then
+		return rayResult.Position + Vector3.new(0, 5, 0)
+	end
+
+	return targetPosition + Vector3.new(0, 8, 0)
+end
+
+local function createTemporaryBossFloor(position)
+	local safetyFloor = Instance.new("Part")
+	safetyFloor.Name = "BossTeleportSafetyFloor"
+	safetyFloor.Size = Vector3.new(12, 1, 12)
+	safetyFloor.Position = position - Vector3.new(0, 3.5, 0)
+	safetyFloor.Anchored = true
+	safetyFloor.CanCollide = true
+	safetyFloor.CanTouch = false
+	safetyFloor.CanQuery = false
+	safetyFloor.Transparency = 1
+	safetyFloor.Parent = workspace
+
+	game.Debris:AddItem(safetyFloor, 2)
+	return safetyFloor
 end
 
 local function teleportToBossRoom(room)
@@ -1410,7 +1439,7 @@ local function teleportToBossRoom(room)
 		return
 	end
 
-	enableBossTeleportNoclip(character)
+	local noclipVersion = enableBossTeleportNoclip(character, 3)
 
 	local roomPosition = getBossRoomPosition(room)
 	Network.Fire("RequestStreaming", roomPosition)
@@ -1419,7 +1448,7 @@ local function teleportToBossRoom(room)
 	character:PivotTo(CFrame.new(roomPosition + Vector3.new(0, 4, 0)))
 	task.wait(0.35)
 
-	-- Mantem o desbloqueio original, mas termina o TP no boss e nao no Sign/telhado.
+	-- Keep the original unlock flow, but finish the teleport near the boss target.
 	UnlockRoom(room.uid)
 	Network.Fire("RequestStreaming", roomPosition)
 
@@ -1438,10 +1467,16 @@ local function teleportToBossRoom(room)
 		bossRoomAnchorPositions[room.uid] = targetPosition
 	end
 
-	-- Permanece voando acima do boss. A ancoragem e o noclip continuam
-	-- ativos enquanto o Auto Farm estiver ligado.
-	character:PivotTo(CFrame.new(targetPosition + Vector3.new(0, 10, 0)))
-	rootPart.Anchored = true
+	local landingPosition = getSafeBossLandingPosition(room, targetPosition)
+
+	-- The invisible base keeps a floor under the character while the room loads.
+	createTemporaryBossFloor(landingPosition)
+	character:PivotTo(CFrame.new(landingPosition))
+	task.wait(0.2)
+
+	-- Restore collision before releasing the character.
+	disableBossTeleportNoclip(noclipVersion)
+	rootPart.Anchored = false
 
 	_G.Teleporting = false
 end
@@ -1454,12 +1489,6 @@ local function getBossRooms()
 			table.insert(rooms, room)
 		end
 	end
-
-	-- A ordem de GetChildren pode variar entre clientes. Ordenar pelo UID
-	-- faz todos comecarem na mesma sala e seguirem a mesma rotacao.
-	table.sort(rooms, function(a, b)
-		return tostring(a.uid) < tostring(b.uid)
-	end)
 
 	return rooms
 end
@@ -1500,14 +1529,10 @@ task.spawn(function()
 		if not _G.AutoMiniBoss then
 			currentBossRoomUID = nil
 			bossRoomEmptySince = nil
+			continue
+		end
 
-			local character = localPlayer.Character
-			local rootPart = character and character:FindFirstChild("HumanoidRootPart")
-			if rootPart and rootPart.Anchored then
-				rootPart.Anchored = false
-			end
-
-			disableBossTeleportNoclip()
+		if isAutoAnomlyActive() then
 			continue
 		end
 
@@ -1548,13 +1573,13 @@ task.spawn(function()
 			continue
 		end
 
-		-- Reavalia em todo ciclo: sempre prioriza os baus pequenos.
-		-- O boss grande so e escolhido quando nenhum bau pequeno existe.
+		-- Recheck every cycle: always prioritize the small chests.
+		-- The big boss is only selected when no small chest exists.
 		local targetBreakable = getAliveBossTarget(targetRoom)
 
 		if not targetBreakable then
-			-- Da tempo para os Breakables carregarem apos chegar na sala.
-			-- Se nao houver nenhum alvo, avanca para a proxima Boss Room.
+			-- Give Breakables time to load after reaching the room.
+			-- If there is still no target, move to the next Boss Room.
 			if not bossRoomEmptySince then
 				bossRoomEmptySince = os.clock()
 			elseif os.clock() - bossRoomEmptySince >= 2.5 then
@@ -1570,11 +1595,11 @@ task.spawn(function()
 
 		local bUID = targetBreakable:GetAttribute("BreakableUID")
 		local bPos = targetBreakable:GetPivot().Position
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
 
-		-- Paira sobre cada bau pequeno e, depois, sobre o boss grande.
-		enableBossTeleportNoclip(character)
-		rootPart.Anchored = true
-		character:PivotTo(CFrame.new(bPos + Vector3.new(0, 10, 0)))
+		if humanoid then
+			humanoid:MoveTo(bPos)
+		end
 
 		Network.UnreliableFire("Breakables_PlayerDealDamage", bUID)
 
